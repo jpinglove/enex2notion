@@ -45,13 +45,13 @@ If you are not familiar with command line programs, take a look at these step-by
 ### With [Homebrew](https://brew.sh/) (Recommended for macOS)
 
 ```bash
-$ brew install enex2notion
+brew install enex2notion
 ```
 
 ### With [**PIPX**](https://github.com/pipxproject/pipx) (Recommended for Linux & Windows)
 
 ```shell
-$ pipx install enex2notion
+pipx install enex2notion
 ```
 
 ### With [**Docker**](https://docs.docker.com/)
@@ -62,13 +62,13 @@ $ pipx install enex2notion
 This command maps current directory `$PWD` to the `/input` directory in the container. You can replace `$PWD` with a directory that contains your `*.enex` files. When running commands like `enex2notion /input` refer to your local mapped directory as `/input`.
 
 ```shell
-$ docker run --rm -t -v "$PWD":/input vzhd1701/enex2notion:latest
+docker run --rm -t -v "$PWD":/input vzhd1701/enex2notion:latest
 ```
 
 ### With PIP
 
 ```bash
-$ pip install --user enex2notion
+pip install --user enex2notion
 ```
 
 **Python 3.8 or later required.**
@@ -78,11 +78,53 @@ $ pip install --user enex2notion
 This project uses [poetry](https://python-poetry.org/) for dependency management and packaging. You will have to install it first. See [poetry official documentation](https://python-poetry.org/docs/) for instructions.
 
 ```shell
-$ git clone https://github.com/vzhd1701/enex2notion.git
-$ cd enex2notion/
-$ poetry install
-$ poetry run enex2notion
+git clone https://github.com/vzhd1701/enex2notion.git
+cd enex2notion/
+poetry install
+poetry run enex2notion
 ```
+
+### Python 3.13 Compatibility
+
+If you're using Python 3.13, you may encounter build issues with some dependencies (particularly PyMuPDF and lxml). Here's the recommended installation approach:
+
+1. **Install Poetry** (if not already installed):
+
+   ```shell
+   # Via the official installer
+   $ curl -sSL https://install.python-poetry.org | python3 -
+   
+   # Or with Homebrew on macOS  
+   $ brew install poetry
+   ```
+
+2. **Clone and setup the project**:
+
+   ```shell
+   git clone https://github.com/subimage/enex2notion.git
+   cd enex2notion/
+   ```
+
+3. **Install compatible dependencies manually**:
+
+   ```shell
+   # First, install these compatible versions directly
+   $ poetry run pip install PyMuPDF==1.26.0 lxml==5.2.2 --force-reinstall
+   
+   # Then install remaining dependencies
+   $ poetry run pip install beautifulsoup4 python-dateutil requests w3lib tinycss2 pdfkit "notion-vzhd1701-fork==0.0.37" tqdm
+   
+   # Finally, install the project itself
+   $ poetry run pip install -e .
+   ```
+
+4. **Verify installation**:
+
+   ```shell
+   poetry run enex2notion --help
+   ```
+
+This approach bypasses the Poetry dependency resolution issues while ensuring all packages work with Python 3.13.
 
 ## Usage
 
@@ -168,19 +210,19 @@ The `--tag` option allows you to add a custom tag to all uploaded notes. It will
 ### Checking notes before upload
 
 ```shell
-$ enex2notion --verbose my_notebooks/
+enex2notion --verbose my_notebooks/
 ```
 
 ### Uploading notes from a single notebook
 
 ```shell
-$ enex2notion --token <YOUR_TOKEN_HERE> "notebook.enex"
+enex2notion --token <YOUR_TOKEN_HERE> "notebook.enex"
 ```
 
 ### Uploading with the option to continue later
 
 ```shell
-$ enex2notion --token <YOUR_TOKEN_HERE> --done-file done.txt "notebook.enex"
+enex2notion --token <YOUR_TOKEN_HERE> --done-file done.txt "notebook.enex"
 ```
 
 ## Getting help
