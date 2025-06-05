@@ -179,7 +179,7 @@ optional arguments:
   -h, --help                 show this help message and exit
   --token TOKEN              Notion integration token [NEEDED FOR UPLOAD]
   --pageid PAGE_ID           Parent page ID where imported notebooks will be created [NEEDED FOR UPLOAD]
-  --root-page NAME           root page name for the imported notebooks, it will be created if it does not exist (default: "Evernote ENEX Import")
+  
   --mode {DB,PAGE}           upload each ENEX as database (DB) or page with children (PAGE) (default: DB)
   --mode-webclips {TXT,PDF}  convert web clips to text (TXT) or pdf (PDF) before upload (default: TXT)
   --retry N                  retry N times on note upload error before giving up, 0 for infinite retries (default: 5)
@@ -220,7 +220,7 @@ enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID my_notebooks/
 
 The upload will take some time since each note is uploaded block-by-block, so you'll probably need some way of resuming it. `--done-file` is precisely for that. All uploaded note hashes will be stored there, so the next time you start, the upload will continue from where you left off.
 
-All uploaded notebooks will appear under the automatically created `Evernote ENEX Import` page. You can change that name with the `--root-page` option. The program will mark unfinished notes with `[UNFINISHED UPLOAD]` text in the title. After successful upload, the mark will be removed.
+All uploaded notebooks will appear directly under the page specified by `--pageid`. The program will mark unfinished notes with `[UNFINISHED UPLOAD]` text in the title. After successful upload, the mark will be removed.
 
 ### Upload modes
 

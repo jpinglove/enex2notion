@@ -65,14 +65,14 @@ def _make_page(note, root):
         # Create a new page at the top level
         # For the modern API, we need to specify a parent
         # We'll create it as a standalone page for now
-        tmp_name = f"{root.get('_title', 'Evernote ENEX Import')} [UNFINISHED UPLOAD]"
+        tmp_name = f"{root.get('_title', 'Import Root')} [UNFINISHED UPLOAD]"
         
         # Since we can't create top-level pages directly, we need the user to 
         # specify a parent page or database. For now, we'll raise an error with instructions.
         raise ValueError(
             "The modern Notion API requires a parent page or database to create new pages. "
             "Please create a page in Notion, share it with your integration, and specify "
-            "it as the root page using the --root-page option."
+            "it using the --pageid option."
         )
     
     # Create a child page under the root

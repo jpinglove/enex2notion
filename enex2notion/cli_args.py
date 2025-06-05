@@ -36,15 +36,7 @@ def parse_args(argv):
             ),
             "metavar": "PAGE_ID",
         },
-        "--root-page": {
-            "default": "Evernote ENEX Import",
-            "help": (
-                "root page name for the imported notebooks,"
-                " it will be created if it does not exist"
-                ' (default: "Evernote ENEX Import")'
-            ),
-            "metavar": "NAME",
-        },
+
         "--mode": {
             "choices": ["DB", "PAGE"],
             "default": "DB",
