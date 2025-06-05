@@ -29,6 +29,13 @@ def parse_args(argv):
                 " [NEEDED FOR UPLOAD]"
             ),
         },
+        "--pageid": {
+            "help": (
+                "Parent page ID where imported notebooks will be created"
+                " [NEEDED FOR UPLOAD]"
+            ),
+            "metavar": "PAGE_ID",
+        },
         "--root-page": {
             "default": "Evernote ENEX Import",
             "help": (

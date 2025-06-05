@@ -23,7 +23,7 @@ def cli(argv):
     if rules.mode_webclips == "PDF":
         ensure_wkhtmltopdf()
 
-    root = get_root(args.token, args.root_page)
+    root = get_root(args.token, args.root_page, args.pageid)
 
     enex_uploader = EnexUploader(
         import_root=root, mode=args.mode, done_file=args.done_file, rules=rules

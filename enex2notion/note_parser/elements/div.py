@@ -4,16 +4,17 @@ import re
 from bs4 import Tag
 
 from enex2notion.note_parser.string_extractor import extract_string
-from enex2notion.notion_blocks.container import NotionCodeBlock
 from enex2notion.notion_blocks.list import NotionTodoBlock
 from enex2notion.notion_blocks.minor import NotionBookmarkBlock
-from enex2notion.notion_blocks.text import NotionTextBlock
+from enex2notion.notion_blocks.text import NotionCodeBlock, NotionTextBlock
 
 logger = logging.getLogger(__name__)
 
 
 def parse_div(element: Tag):
     style = element.get("style", "")
+    if not isinstance(style, str):
+        style = ""
 
     # Tasks, skipping those
     if "en-task-group" in style:
@@ -40,7 +41,7 @@ def parse_text(element: Tag):
     element_text = extract_string(element)
 
     todo = element.find("en-todo")
-    if todo:
+    if todo and isinstance(todo, Tag):
         is_checked = todo.get("checked") == "true"
         return NotionTodoBlock(text_prop=element_text, checked=is_checked)
 
@@ -48,6 +49,10 @@ def parse_text(element: Tag):
 
 
 def parse_richlink(element: Tag):
-    url = re.match(".*en-href:(.*?);", element["style"]).group(1).strip()
-
-    return NotionBookmarkBlock(url=url)
+    style = element.get("style", "")
+    if isinstance(style, str):
+        match = re.match(".*en-href:(.*?);", style)
+        if match:
+            url = match.group(1).strip()
+            return NotionBookmarkBlock(url=url)
+    return None

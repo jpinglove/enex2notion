@@ -1,39 +1,53 @@
-from notion import block
+from enex2notion.enex_types import EvernoteResource
+from enex2notion.notion_blocks.base import NotionBaseBlock
 
-from enex2notion.notion_blocks.embeddable import NotionEmbedBlock
 
-
-class NotionUploadableBlock(NotionEmbedBlock):
-    def __init__(self, md5_hash, resource=None, **kwargs):
+class NotionUploadableBlock(NotionBaseBlock):
+    def __init__(self, resource: EvernoteResource, **kwargs):
         super().__init__(**kwargs)
-
-        self.md5_hash = md5_hash
 
         self.resource = resource
 
-    def __eq__(self, other):
-        return (
-            super().__eq__(other)
-            and self.md5_hash == other.md5_hash
-            and self.resource == other.resource
-        )
+
+class NotionEmbedBlock(NotionBaseBlock):
+    def __init__(self, url, **kwargs):
+        super().__init__(**kwargs)
+
+        self.attrs["url"] = url
+
+        self.properties["title"] = [[url]]
+
+
+class NotionVideoBlock(NotionEmbedBlock):
+    type = "video"
+
+
+class NotionAudioBlock(NotionEmbedBlock):
+    type = "audio"
 
 
 class NotionFileBlock(NotionUploadableBlock):
-    type = block.FileBlock
+    type = "file"
 
+    def __init__(self, resource, file_name, **kwargs):
+        super().__init__(resource, **kwargs)
 
-class NotionVideoBlock(NotionUploadableBlock):
-    type = block.VideoBlock
-
-
-class NotionAudioBlock(NotionUploadableBlock):
-    type = block.AudioBlock
+        self.properties["title"] = [[file_name]]
 
 
 class NotionPDFBlock(NotionUploadableBlock):
-    type = block.PDFBlock
+    type = "pdf"
+
+    def __init__(self, resource, **kwargs):
+        super().__init__(resource, **kwargs)
+
+        self.properties["title"] = [[""]]
 
 
 class NotionImageBlock(NotionUploadableBlock):
-    type = block.ImageBlock
+    type = "image"
+
+    def __init__(self, resource, **kwargs):
+        super().__init__(resource, **kwargs)
+
+        self.properties["title"] = [[""]]

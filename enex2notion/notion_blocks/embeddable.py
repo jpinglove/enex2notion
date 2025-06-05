@@ -1,44 +1,66 @@
-from notion import block
-
 from enex2notion.notion_blocks.base import NotionBaseBlock
 
 
 class NotionEmbedBlock(NotionBaseBlock):
-    def __init__(self, width=None, height=None, url=None, **kwargs):
+    def __init__(self, url, **kwargs):
         super().__init__(**kwargs)
 
-        self.width = width
-        self.height = height
-        self.source_url = url
+        self.attrs["url"] = url
 
-    @property
-    def height(self):
-        return self.attrs.get("height")
-
-    @height.setter
-    def height(self, height):
-        if height is not None:
-            self.attrs["height"] = height
-
-    @property
-    def width(self):
-        return self.attrs.get("width")
-
-    @width.setter
-    def width(self, width):
-        if width is not None:
-            self.attrs["width"] = width
-
-    @property
-    def source_url(self):
-        return self.attrs.get("display_source")
-
-    @source_url.setter
-    def source_url(self, source_url):
-        if source_url is not None:
-            self.attrs["display_source"] = source_url
-            self.attrs["source"] = source_url
+        self.properties["title"] = [[url]]
 
 
 class NotionImageEmbedBlock(NotionEmbedBlock):
-    type = block.ImageBlock
+    type = "image"
+
+
+class NotionBookmarkBlock(NotionEmbedBlock):
+    type = "bookmark"
+
+
+class NotionCodepenBlock(NotionEmbedBlock):
+    type = "codepen"
+
+
+class NotionDriveBlock(NotionEmbedBlock):
+    type = "drive"
+
+
+class NotionFigmaBlock(NotionEmbedBlock):
+    type = "figma"
+
+
+class NotionMapsBlock(NotionEmbedBlock):
+    type = "maps"
+
+
+class NotionTweetBlock(NotionEmbedBlock):
+    type = "tweet"
+
+
+class NotionGistBlock(NotionEmbedBlock):
+    type = "gist"
+
+
+class NotionFramerBlock(NotionEmbedBlock):
+    type = "framer"
+
+
+class NotionInvisionBlock(NotionEmbedBlock):
+    type = "invision"
+
+
+class NotionLoomBlock(NotionEmbedBlock):
+    type = "loom"
+
+
+class NotionWhimsicalBlock(NotionEmbedBlock):
+    type = "whimsical"
+
+
+class NotionMiroBlock(NotionEmbedBlock):
+    type = "miro"
+
+
+class NotionPDFBlock(NotionEmbedBlock):
+    type = "pdf"

@@ -1,22 +1,29 @@
-from notion import block
-
-from enex2notion.notion_blocks.text import NotionTextBased
+from enex2notion.notion_blocks.base import NotionBaseBlock
 
 
-class NotionCodeBlock(NotionTextBased):
-    type = block.CodeBlock
+class NotionColumnListBlock(NotionBaseBlock):
+    type = "column_list"
 
-    def __init__(self, **kwargs):
+
+class NotionColumnBlock(NotionBaseBlock):
+    type = "column"
+
+
+class NotionPageBlock(NotionBaseBlock):
+    type = "page"
+
+    def __init__(self, title=None, **kwargs):
         super().__init__(**kwargs)
 
-        self.attrs["language"] = "Plain Text"
-        self.attrs["wrap"] = True
+        if title:
+            self.properties["title"] = title
 
 
-class NotionCalloutBlock(NotionTextBased):
-    type = block.CalloutBlock
+class NotionToggleBlock(NotionBaseBlock):
+    type = "toggle"
 
-    def __init__(self, icon, **kwargs):
+    def __init__(self, title=None, **kwargs):
         super().__init__(**kwargs)
 
-        self.attrs["icon"] = icon
+        if title:
+            self.properties["title"] = title

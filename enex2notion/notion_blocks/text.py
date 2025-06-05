@@ -1,5 +1,3 @@
-from notion import block
-
 from enex2notion.notion_blocks.base import NotionBaseBlock
 
 
@@ -63,7 +61,7 @@ class TextProp(object):
 
 
 class NotionTextBased(NotionBaseBlock):
-    def __init__(self, text_prop: TextProp = None, **kwargs):
+    def __init__(self, text_prop=None, **kwargs):
         super().__init__(**kwargs)
 
         if text_prop:
@@ -81,10 +79,159 @@ class NotionTextBased(NotionBaseBlock):
         )
 
     @text_prop.setter
-    def text_prop(self, text_prop: TextProp):
+    def text_prop(self, text_prop):
         self.attrs["title_plaintext"] = text_prop.text
         self.properties["properties.title"] = text_prop.properties
 
 
-class NotionTextBlock(NotionTextBased):
-    type = block.TextBlock
+class NotionTextBlock(NotionBaseBlock):
+    type = "text"
+
+    def __init__(self, title=None, text_prop=None, **kwargs):
+        super().__init__(**kwargs)
+
+        if text_prop:
+            self.properties["title"] = text_prop.properties
+        elif title:
+            self.properties["title"] = title
+
+    @property
+    def text_prop(self):
+        if "title" in self.properties:
+            # Extract text from properties
+            text = ""
+            for prop in self.properties["title"]:
+                if isinstance(prop, list) and len(prop) > 0:
+                    text += prop[0]
+            return TextProp(text=text, properties=self.properties["title"])
+        return TextProp(text="", properties=[])
+
+    @text_prop.setter
+    def text_prop(self, text_prop):
+        self.properties["title"] = text_prop.properties
+
+    def append_line(self, line):
+        if "title" in self.properties:
+            # Simple concatenation for new API
+            if isinstance(self.properties["title"], list) and isinstance(line, list):
+                self.properties["title"].extend(line)
+            else:
+                self.properties["title"] = line
+        else:
+            self.properties["title"] = line
+
+
+class NotionCodeBlock(NotionBaseBlock):
+    type = "code"
+
+    def __init__(self, language="plain text", title=None, text_prop=None, **kwargs):
+        super().__init__(**kwargs)
+
+        self.attrs["language"] = language
+
+        if text_prop:
+            self.properties["title"] = text_prop.properties
+        elif title:
+            self.properties["title"] = title
+
+    @property
+    def text_prop(self):
+        if "title" in self.properties:
+            # Extract text from properties
+            text = ""
+            for prop in self.properties["title"]:
+                if isinstance(prop, list) and len(prop) > 0:
+                    text += prop[0]
+            return TextProp(text=text, properties=self.properties["title"])
+        return TextProp(text="", properties=[])
+
+    @text_prop.setter
+    def text_prop(self, text_prop):
+        self.properties["title"] = text_prop.properties
+
+
+class NotionQuoteBlock(NotionBaseBlock):
+    type = "quote"
+
+    def __init__(self, title=None, text_prop=None, **kwargs):
+        super().__init__(**kwargs)
+
+        if text_prop:
+            self.properties["title"] = text_prop.properties
+        elif title:
+            self.properties["title"] = title
+
+    @property
+    def text_prop(self):
+        if "title" in self.properties:
+            # Extract text from properties
+            text = ""
+            for prop in self.properties["title"]:
+                if isinstance(prop, list) and len(prop) > 0:
+                    text += prop[0]
+            return TextProp(text=text, properties=self.properties["title"])
+        return TextProp(text="", properties=[])
+
+    @text_prop.setter
+    def text_prop(self, text_prop):
+        self.properties["title"] = text_prop.properties
+
+
+class NotionCalloutBlock(NotionBaseBlock):
+    type = "callout"
+
+    def __init__(self, title=None, text_prop=None, icon="⚠️", **kwargs):
+        super().__init__(**kwargs)
+
+        self.attrs["icon"] = icon
+
+        if text_prop:
+            self.properties["title"] = text_prop.properties
+        elif title:
+            self.properties["title"] = title
+
+    @property
+    def text_prop(self):
+        if "title" in self.properties:
+            # Extract text from properties
+            text = ""
+            for prop in self.properties["title"]:
+                if isinstance(prop, list) and len(prop) > 0:
+                    text += prop[0]
+            return TextProp(text=text, properties=self.properties["title"])
+        return TextProp(text="", properties=[])
+
+    @text_prop.setter
+    def text_prop(self, text_prop):
+        self.properties["title"] = text_prop.properties
+
+
+class NotionEquationBlock(NotionBaseBlock):
+    type = "equation"
+
+    def __init__(self, title=None, text_prop=None, **kwargs):
+        super().__init__(**kwargs)
+
+        if text_prop:
+            self.properties["title"] = text_prop.properties
+        elif title:
+            self.properties["title"] = title
+
+    @property
+    def text_prop(self):
+        if "title" in self.properties:
+            # Extract text from properties
+            text = ""
+            for prop in self.properties["title"]:
+                if isinstance(prop, list) and len(prop) > 0:
+                    text += prop[0]
+            return TextProp(text=text, properties=self.properties["title"])
+        return TextProp(text="", properties=[])
+
+    @text_prop.setter
+    def text_prop(self, text_prop):
+        self.properties["title"] = text_prop.properties
+
+
+class NotionDividerBlock(NotionBaseBlock):
+    type = "divider"

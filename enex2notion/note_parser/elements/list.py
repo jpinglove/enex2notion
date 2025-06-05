@@ -54,10 +54,10 @@ def parse_list(element: Tag) -> List[NotionBaseBlock]:
     for subelement in element.children:
         name = subelement.name if isinstance(subelement, Tag) else None
 
-        if name == "li":
+        if name == "li" and isinstance(subelement, Tag):
             list_nodes.add_li(subelement)
 
-        elif name in {"ul", "ol"}:
+        elif name in {"ul", "ol"} and isinstance(subelement, Tag):
             list_nodes.add_ul_ol(subelement)
 
         else:
@@ -91,8 +91,11 @@ def _parse_odd_item(element: PageElement):
         logger.debug("Non-empty string element inside list")
         return NotionTextBlock(text_prop=TextProp(text=element.text.strip()))
 
-    logger.debug(f"Unexpected tag inside list: {element.name}, parsing as text")
-    return NotionTextBlock(text_prop=extract_string(element))
+    if isinstance(element, Tag):
+        logger.debug(f"Unexpected tag inside list: {element.name}, parsing as text")
+        return NotionTextBlock(text_prop=extract_string(element))
+    
+    return None
 
 
 def _parse_list_item(list_item, is_ul):

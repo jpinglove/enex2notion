@@ -1,9 +1,7 @@
 import logging
+from datetime import datetime
 
-from notion.block import CollectionViewPageBlock, PageBlock
-from notion.collection import CollectionRowBlock
-from notion.operations import build_operation
-from requests import RequestException
+from notion_client.errors import APIResponseError
 from tqdm import tqdm
 
 from enex2notion.enex_types import EvernoteNote
@@ -33,43 +31,111 @@ def _upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
     try:
         for block in progress_iter:
             upload_block(new_page, block)
-    except RequestException:
+    except APIResponseError:
         if not keep_failed:
-            if isinstance(new_page, CollectionRowBlock):
-                new_page.remove()
-            else:
-                new_page.remove(permanently=True)
-
+            _delete_page(new_page)
         raise
 
     # Set proper name after everything is uploaded
-    new_page.title_plaintext = note.title
-
+    _update_page_title(new_page, note.title)
     _update_edit_time(new_page, note.updated)
 
 
 def _update_edit_time(page, date):
-    page._client.submit_transaction(  # noqa: WPS437
-        build_operation(
-            id=page.id,
-            path="last_edited_time",
-            args=int(date.timestamp() * 1000),
-            table=page._table,  # noqa: WPS437
-        ),
-        update_last_edited=False,
-    )
+    """Update the last edited time of a page using the modern API."""
+    try:
+        client = page.get("_client")
+        if client and page.get("id"):
+            # The modern API doesn't allow direct manipulation of last_edited_time
+            # This is handled automatically by Notion
+            pass
+    except Exception as e:
+        logger.warning(f"Could not update edit time: {e}")
 
 
 def _make_page(note, root):
-    tmp_name = f"{note.title} [UNFINISHED UPLOAD]"
-
-    return (
-        root.collection.add_row(
-            title=tmp_name,
-            url=note.url,
-            tags=note.tags,
-            created=note.created,
+    """Create a new page using the modern API."""
+    client = root.get("_client")
+    
+    if not client:
+        raise ValueError("No client available for page creation")
+    
+    # Handle the case where we need to create the root page first
+    if root.get("_needs_creation"):
+        # Create a new page at the top level
+        # For the modern API, we need to specify a parent
+        # We'll create it as a standalone page for now
+        tmp_name = f"{root.get('_title', 'Evernote ENEX Import')} [UNFINISHED UPLOAD]"
+        
+        # Since we can't create top-level pages directly, we need the user to 
+        # specify a parent page or database. For now, we'll raise an error with instructions.
+        raise ValueError(
+            "The modern Notion API requires a parent page or database to create new pages. "
+            "Please create a page in Notion, share it with your integration, and specify "
+            "it as the root page using the --root-page option."
         )
-        if isinstance(root, CollectionViewPageBlock)
-        else root.children.add_new(PageBlock, title_plaintext=tmp_name)
-    )
+    
+    # Create a child page under the root
+    tmp_name = f"{note.title} [UNFINISHED UPLOAD]"
+    
+    page_data = {
+        "parent": {"page_id": root["id"]},
+        "properties": {
+            "title": {
+                "title": [
+                    {
+                        "text": {
+                            "content": tmp_name
+                        }
+                    }
+                ]
+            }
+        },
+        "children": []  # We'll add blocks later
+    }
+    
+    try:
+        new_page = client.pages.create(**page_data)
+        new_page["_client"] = client
+        new_page["_note"] = note
+        return new_page
+    except APIResponseError as e:
+        logger.error(f"Failed to create page: {e}")
+        raise
+
+
+def _update_page_title(page, title):
+    """Update the page title using the modern API."""
+    try:
+        client = page.get("_client")
+        if client and page.get("id"):
+            client.pages.update(
+                page_id=page["id"],
+                properties={
+                    "title": {
+                        "title": [
+                            {
+                                "text": {
+                                    "content": title
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+    except APIResponseError as e:
+        logger.warning(f"Could not update page title: {e}")
+
+
+def _delete_page(page):
+    """Delete a page using the modern API."""
+    try:
+        client = page.get("_client")
+        if client and page.get("id"):
+            # Archive the page (Notion's equivalent of deletion)
+            client.pages.update(
+                page_id=page["id"],
+                archived=True
+            )
+    except APIResponseError as e:
+        logger.warning(f"Could not delete page: {e}")

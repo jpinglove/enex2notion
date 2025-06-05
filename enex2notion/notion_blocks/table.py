@@ -1,44 +1,48 @@
 from typing import Iterable
 
-from notion.block import BasicBlock
-
 from enex2notion.notion_blocks.base import NotionBaseBlock
 from enex2notion.notion_blocks.text import TextProp
-from enex2notion.utils_rand_id import rand_id_list
-
-
-class TableBlock(BasicBlock):
-    _type = "table"
-
-
-class TableRowBlock(BasicBlock):
-    _type = "table_row"
 
 
 class NotionTableBlock(NotionBaseBlock):
-    type = TableBlock
+    type = "table"
 
-    def __init__(self, columns: int, **kwargs):
+    def __init__(self, width=None, has_column_header=False, has_row_header=False, **kwargs):
         super().__init__(**kwargs)
 
-        self._columns = rand_id_list(columns, 4)
+        self.attrs["table_width"] = width if width else 2
+        self.attrs["has_column_header"] = has_column_header
+        self.attrs["has_row_header"] = has_row_header
+        self._columns = []
 
-        self.properties["format.table_block_column_order"] = self._columns
-
-    def add_row(self, row: Iterable[TextProp]):
+    def add_row(self, row: Iterable):
         t_row = NotionTableRowBlock()
-
-        for col_id, cell in zip(self._columns, row):
-            t_row.properties[f"properties.{col_id}"] = cell.properties
+        
+        # For the new API, we'll store the row data directly
+        if hasattr(row, '__iter__'):
+            for i, cell in enumerate(row):
+                if hasattr(cell, 'properties'):
+                    t_row.properties[f"cell_{i}"] = cell.properties
+                else:
+                    t_row.properties[f"cell_{i}"] = str(cell)
 
         self.children.append(t_row)
 
     def iter_rows(self):
-        yield from (
-            [row.properties[f"properties.{col_id}"] for col_id in self._columns]
-            for row in self.children
-        )
+        """Iterate through table rows."""
+        for row in self.children:
+            yield row.properties
 
 
 class NotionTableRowBlock(NotionBaseBlock):
-    type = TableRowBlock
+    type = "table_row"
+
+
+class NotionTableCellBlock(NotionBaseBlock):
+    type = "table_cell"
+
+    def __init__(self, title=None, **kwargs):
+        super().__init__(**kwargs)
+
+        if title:
+            self.properties["title"] = title

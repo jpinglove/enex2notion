@@ -126,11 +126,49 @@ If you're using Python 3.13, you may encounter build issues with some dependenci
 
 This approach bypasses the Poetry dependency resolution issues while ensuring all packages work with Python 3.13.
 
+## Setup
+
+### 1. Create a Notion Integration
+
+1. Go to [Notion Integrations](https://www.notion.so/my-integrations)
+2. Click **"+ New integration"**
+3. Give your integration a name (e.g., "ENEX Importer")
+4. Select the workspace you want to import to
+5. Click **"Submit"**
+6. Copy the **"Integration Token"** (starts with `secret_`)
+
+### 2. Create a Parent Page
+
+1. In your Notion workspace, create a new page where you want the imported notes to appear
+2. This will be the parent page for all your imported notebooks
+
+### 3. Give Integration Access to Parent Page
+
+1. Go to **[Notion Integrations](https://www.notion.so/my-integrations)**
+2. Click on your integration name
+3. Go to the **"Capabilities"** tab and ensure these are enabled:
+   - Read content
+   - Update content  
+   - Insert content
+4. Go to the **"Content capabilities"** section:
+   - Enable **"Read pages"**
+   - Enable **"Update pages"**  
+   - Enable **"Create pages"**
+5. Go to the **"Access"** tab
+6. Find your parent page and grant access to it
+
+### 4. Get Parent Page ID
+
+The parent page ID is the long string in your page URL after the last dash:
+
+- URL: `https://notion.so/workspace/My-Page-209ffa4c3a38803ab96ed05860fdafe9`
+- Page ID: `209ffa4c3a38803ab96ed05860fdafe9`
+
 ## Usage
 
 ```shell
 $ enex2notion --help
-usage: enex2notion [-h] [--token TOKEN] [OPTION ...] FILE/DIR [FILE/DIR ...]
+usage: enex2notion [-h] [--token TOKEN] [--pageid PAGE_ID] [OPTION ...] FILE/DIR [FILE/DIR ...]
 
 Uploads ENEX files to Notion
 
@@ -139,7 +177,8 @@ positional arguments:
 
 optional arguments:
   -h, --help                 show this help message and exit
-  --token TOKEN              Notion token, stored in token_v2 cookie for notion.so [NEEDED FOR UPLOAD]
+  --token TOKEN              Notion integration token [NEEDED FOR UPLOAD]
+  --pageid PAGE_ID           Parent page ID where imported notebooks will be created [NEEDED FOR UPLOAD]
   --root-page NAME           root page name for the imported notebooks, it will be created if it does not exist (default: "Evernote ENEX Import")
   --mode {DB,PAGE}           upload each ENEX as database (DB) or page with children (PAGE) (default: DB)
   --mode-webclips {TXT,PDF}  convert web clips to text (TXT) or pdf (PDF) before upload (default: TXT)
@@ -161,11 +200,21 @@ optional arguments:
 
 You can pass single `*.enex` files or directories. The program will recursively scan directories for `*.enex` files.
 
-### Token & dry run mode
+### Token & Setup
 
-The upload requires you to have a `token_v2` cookie for the Notion website. For information on how to get it, see [this article](https://vzhd1701.notion.site/Find-Your-Notion-Token-5f57951434c1414d84ac72f88226eede).
+The upload requires a Notion integration token (see [Setup](#setup) section above for detailed instructions).
 
-The program can run without `--token` provided though. It will not make any network requests without it. Executing a dry run with `--verbose` is an excellent way to check if your `*.enex` files are parsed correctly before uploading.
+The program can run without `--token` and `--pageid` provided though. It will not make any network requests without them. Executing a dry run with `--verbose` is an excellent way to check if your `*.enex` files are parsed correctly before uploading.
+
+**Example commands:**
+
+```shell
+# Dry run to check parsing
+enex2notion --verbose my_notebooks/
+
+# Upload with integration token and parent page ID
+enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID my_notebooks/
+```
 
 ### Upload continuation
 
@@ -216,13 +265,13 @@ enex2notion --verbose my_notebooks/
 ### Uploading notes from a single notebook
 
 ```shell
-enex2notion --token <YOUR_TOKEN_HERE> "notebook.enex"
+enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID "notebook.enex"
 ```
 
 ### Uploading with the option to continue later
 
 ```shell
-enex2notion --token <YOUR_TOKEN_HERE> --done-file done.txt "notebook.enex"
+enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID --done-file done.txt "notebook.enex"
 ```
 
 ## Getting help

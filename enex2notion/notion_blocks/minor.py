@@ -1,16 +1,24 @@
-from notion import block
-
 from enex2notion.notion_blocks.base import NotionBaseBlock
 
 
 class NotionDividerBlock(NotionBaseBlock):
-    type = block.DividerBlock
+    type = "divider"
 
 
 class NotionBookmarkBlock(NotionBaseBlock):
-    type = block.BookmarkBlock
+    type = "bookmark"
 
     def __init__(self, url, **kwargs):
         super().__init__(**kwargs)
 
         self.attrs["link"] = url
+
+
+class NotionEquationBlock(NotionBaseBlock):
+    type = "equation"
+
+    def __init__(self, title=None, **kwargs):
+        super().__init__(**kwargs)
+
+        if title:
+            self.properties["title"] = title
