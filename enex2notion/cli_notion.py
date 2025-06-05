@@ -36,6 +36,10 @@ def get_notion_client(token):
         client = Client(auth=token)
         # Test the client by trying to list users
         client.users.list()
+        # Make token discoverable
+        client.auth = token
+        client._auth = token
+        client._token = token
         return client
     except APIResponseError as e:
         if e.status == 401:

@@ -1,6 +1,7 @@
 import io
 import logging
 import re
+from typing import Optional
 
 import requests
 
@@ -196,6 +197,39 @@ def _get_notion_block_type(block_type):
     return type_mapping.get(block_type, "paragraph")
 
 
+def _extract_auth_token(client) -> Optional[str]:
+    """
+    Best-effort extraction of the integration token from a notion-client
+    instance.  Covers several SDK versions.
+    """
+    # 1. Public attribute on recent SDKs
+    token = getattr(client, "auth", None)
+    # 2. Private attributes used by older versions
+    token = token or getattr(client, "_token", None) or getattr(client, "_auth", None) or getattr(client, "token", None)
+
+    # 3. Fall back to the underlying requests.Session headers
+    if not token and hasattr(client, "_session"):
+        auth_header = client._session.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer "):]
+    return token
+
+
+def _attach_file_to_block(client, block, file_upload_id: str) -> None:
+    block_type = block.get("type")
+    if block_type not in {"image", "video", "audio", "file"}:
+        logger.debug("Block type %s cannot carry a file upload", block_type)
+        return
+
+    payload = {
+        block_type: {
+            "file_upload": {"id": file_upload_id},
+        }
+    }
+    client.blocks.update(block_id=block["id"], **payload)
+    logger.debug("Attached file-upload %s to block %s", file_upload_id, block["id"])
+
+
 def _upload_file_to_block(client, block, resource: EvernoteResource):
     """Upload a file to a block using the modern Notion API Direct Upload method."""
     if not resource or not resource.data_bin:
@@ -212,13 +246,8 @@ def _upload_file_to_block(client, block, resource: EvernoteResource):
             logger.info("Files larger than 20MB require multi-part upload which is not yet implemented")
             return
         
-        # Get the auth token from the client
-        # The notion-client library stores the auth token internally but doesn't expose it as _auth
-        # We need to extract it from the client's session headers or pass it separately
-        auth_token = getattr(client, 'auth', None)
-        if not auth_token:
-            # Try to get it from client._token if available
-            auth_token = getattr(client, '_token', None)
+        # Fetch the integration token (several SDK versions hide it differently)
+        auth_token = _extract_auth_token(client)
         
         if not auth_token:
             logger.error("Unable to access auth token from Notion client")
@@ -226,21 +255,18 @@ def _upload_file_to_block(client, block, resource: EvernoteResource):
             logger.info(f"Leaving placeholder block for manual replacement in Notion")
             return
         
-        # Try the proper file upload using Notion's Direct Upload API
-        success = _try_direct_upload(auth_token, block, resource)
-        if success:
-            logger.info(f"Successfully uploaded {resource.file_name} using Direct Upload")
+        # Perform the 3-step direct upload; receive the resulting file_upload_id
+        file_upload_id = _try_direct_upload(auth_token, resource)
+        if file_upload_id:
+            _attach_file_to_block(client, block, file_upload_id)
+            logger.info("Successfully uploaded and attached %s", resource.file_name)
             return
-        
-        # If upload fails, leave placeholder
-        logger.warning(f"File upload failed for {resource.file_name}")
-        logger.info(f"Leaving placeholder block for manual replacement in Notion")
         
     except Exception as e:
         logger.error(f"Error processing file {resource.file_name}: {e}")
 
 
-def _try_direct_upload(auth_token, block, resource: EvernoteResource):
+def _try_direct_upload(auth_token: str, resource: EvernoteResource) -> Optional[str]:
     """Try to upload a file using Notion's Direct Upload API (3-step process)."""
     try:
         # Step 1: Create a file upload object
@@ -269,7 +295,7 @@ def _try_direct_upload(auth_token, block, resource: EvernoteResource):
         
         if create_response.status_code != 200:
             logger.debug(f"File upload object creation failed: HTTP {create_response.status_code}")
-            return False
+            return None
             
         upload_object = create_response.json()
         file_upload_id = upload_object.get('id')
@@ -277,7 +303,7 @@ def _try_direct_upload(auth_token, block, resource: EvernoteResource):
         
         if not file_upload_id:
             logger.debug("No file upload ID returned from creation")
-            return False
+            return None
         
         logger.debug(f"Step 2: Sending file content for {resource.file_name}")
         
@@ -304,29 +330,23 @@ def _try_direct_upload(auth_token, block, resource: EvernoteResource):
         
         if send_response.status_code != 200:
             logger.debug(f"File content upload failed: HTTP {send_response.status_code}")
-            return False
+            return None
         
         upload_result = send_response.json()
         if upload_result.get('status') != 'uploaded':
             logger.debug(f"File upload status is not 'uploaded': {upload_result.get('status')}")
-            return False
+            return None
         
         logger.debug(f"Step 3: Attaching file to block for {resource.file_name}")
         
-        # Step 3: Update the block with the file upload ID
-        # Note: For this step we need to use the notion client because we need to update the block
-        # But we can't easily do this here since we don't have access to the notion client
-        # For now, we'll return True to indicate the upload was successful
-        # The attachment step should be handled separately
-        
-        # TODO: Implement block attachment using the file upload ID
-        logger.debug(f"File uploaded successfully but attachment to block not yet implemented")
-        return True
+        # ─── Step-3 will be executed by _attach_file_to_block ───
+        logger.debug("Direct upload successful, id=%s", file_upload_id)
+        return file_upload_id
             
     except Exception as e:
         logger.debug(f"Direct Upload failed for {resource.file_name}: {e}")
         
-    return False
+    return None
 
 
 def _extract_file_id(url):
