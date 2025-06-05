@@ -17,8 +17,30 @@ def upload_block(page, block):
     if not client:
         raise ValueError("No client available for block upload")
     
+    # For file blocks with resources, upload the file first to get the upload ID
+    file_upload_id = None
+    if (isinstance(block, NotionUploadableBlock) and 
+        hasattr(block, 'resource') and 
+        block.resource is not None):
+        
+        logger.info(f"Pre-uploading file for block: {block.resource.file_name}")
+        auth_token = _extract_auth_token(client)
+        if auth_token:
+            file_upload_id = _try_direct_upload(auth_token, block.resource)
+            if file_upload_id:
+                logger.debug(f"Pre-upload successful, got file ID: {file_upload_id}")
+    
     # Convert our internal block representation to Notion API format
-    block_data = _convert_block_to_api_format(block)
+    block_data = _convert_block_to_api_format(block, file_upload_id)
+    
+    # Debug logging to see what's being sent
+    logger.debug(f"Uploading block of type: {block.type}")
+    logger.debug(f"Block data: {block_data}")
+    
+    # Validate the block data before sending
+    if not _validate_block_data(block_data):
+        logger.error(f"Invalid block data: {block_data}")
+        raise ValueError("Invalid block data structure")
     
     try:
         # Append the block as a child to the page
@@ -31,26 +53,34 @@ def upload_block(page, block):
         if response.get("results"):
             created_block = response["results"][0]
             
-            # Handle file uploads if this is an uploadable block
-            if (isinstance(block, NotionUploadableBlock) and 
-                hasattr(block, 'resource') and 
-                block.resource is not None):
-                _upload_file_to_block(client, created_block, block.resource)
+            # File upload is already handled for blocks with file_upload_id
+            # No additional file upload needed
             
-            # Recursively upload child blocks
+            # Recursively upload child blocks with fallback to top level
             for child_block in block.children:
-                child_page = {
-                    "id": created_block["id"],
-                    "_client": client
-                }
-                upload_block(child_page, child_block)
+                try:
+                    # First, try to upload as a child block
+                    child_page = {
+                        "id": created_block["id"],
+                        "_client": client
+                    }
+                    upload_block(child_page, child_block)
+                except Exception as e:
+                    # If child upload fails due to "does not support children", 
+                    # upload at the parent level instead
+                    if "does not support children" in str(e).lower():
+                        logger.debug(f"Block type '{created_block['type']}' doesn't support children, uploading child at parent level")
+                        upload_block(page, child_block)
+                    else:
+                        # Re-raise other errors
+                        raise
                 
     except Exception as e:
         logger.error(f"Failed to upload block: {e}")
         raise
 
 
-def _convert_block_to_api_format(block):
+def _convert_block_to_api_format(block, file_upload_id=None):
     """Convert internal block representation to Notion API format."""
     notion_type = _get_notion_block_type(block.type)
     
@@ -63,6 +93,11 @@ def _convert_block_to_api_format(block):
     if notion_type in ["paragraph", "heading_1", "heading_2", "heading_3", "quote", "bulleted_list_item", "numbered_list_item", "to_do", "toggle"]:
         # These blocks use rich text
         rich_text = _convert_properties_to_rich_text(block.properties)
+        
+        # Ensure we have at least an empty rich text array
+        if not rich_text:
+            rich_text = [{"type": "text", "text": {"content": ""}}]
+        
         api_block[notion_type] = {
             "rich_text": rich_text
         }
@@ -73,6 +108,11 @@ def _convert_block_to_api_format(block):
             
     elif notion_type == "code":
         rich_text = _convert_properties_to_rich_text(block.properties)
+        
+        # Ensure we have at least an empty rich text array
+        if not rich_text:
+            rich_text = [{"type": "text", "text": {"content": ""}}]
+        
         api_block[notion_type] = {
             "rich_text": rich_text,
             "language": block.attrs.get("language", "plain text")
@@ -81,36 +121,66 @@ def _convert_block_to_api_format(block):
     elif notion_type == "divider":
         api_block[notion_type] = {}
         
-    elif notion_type in ["image", "video", "audio", "file"]:
-        # File blocks need special handling - we'll set up the structure 
-        # and handle the actual upload separately
-        if hasattr(block, 'resource') and block.resource:
+    elif notion_type in ["image", "video", "audio", "file", "pdf"]:
+        # File blocks need special handling
+        if hasattr(block, 'resource') and block.resource and file_upload_id:
+            # Use the pre-uploaded file ID
             api_block[notion_type] = {
-                "type": "external",
-                "external": {
-                    "url": "https://via.placeholder.com/1x1.png"  # Placeholder, will be updated after upload
-                }
+                "type": "file_upload",
+                "file_upload": {"id": file_upload_id}
             }
         else:
-            # Handle URL-based media
+            # Handle URL-based media or fallback to external URL
             url = block.attrs.get("url", "")
-            if url:
+            if url and _is_valid_url(url):
                 api_block[notion_type] = {
                     "type": "external",
                     "external": {"url": url}
                 }
+            else:
+                # For file resources without successful upload, convert to paragraph
+                logger.warning(f"No valid file upload or URL for {notion_type} block, converting to paragraph")
+                api_block = {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": f"[File upload failed: {getattr(block.resource, 'file_name', 'unknown')}]"}}]
+                    }
+                }
                 
     elif notion_type == "bookmark":
         url = block.attrs.get("url", "")
-        api_block[notion_type] = {
-            "url": url
-        }
+        if _is_valid_url(url):
+            api_block[notion_type] = {
+                "url": url
+            }
+        else:
+            logger.warning(f"Invalid URL for bookmark, converting to paragraph: {url}")
+            # Convert to paragraph instead
+            api_block = {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": f"[Invalid bookmark: {url}]"}}]
+                }
+            }
         
     elif notion_type == "embed":
         url = block.attrs.get("url", "")
-        api_block[notion_type] = {
-            "url": url
-        }
+        if _is_valid_url(url):
+            api_block[notion_type] = {
+                "url": url
+            }
+        else:
+            logger.warning(f"Invalid URL for embed, converting to paragraph: {url}")
+            # Convert to paragraph instead
+            api_block = {
+                "object": "block", 
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": f"[Invalid embed: {url}]"}}]
+                }
+            }
         
     return api_block
 
@@ -154,7 +224,11 @@ def _convert_properties_to_rich_text(properties):
                                 annotations["underline"] = True
                             elif format_type == "a":  # link
                                 if len(format_item) > 1:
-                                    text_obj["text"]["link"] = {"url": format_item[1]}
+                                    url = format_item[1]
+                                    if _is_valid_url(url):
+                                        text_obj["text"]["link"] = {"url": url}
+                                    else:
+                                        logger.warning(f"Skipping invalid URL in link: {url}")
                 
                 if annotations:
                     text_obj["annotations"] = annotations
@@ -187,6 +261,7 @@ def _get_notion_block_type(block_type):
         "toggle": "toggle",
         "image": "image",
         "file": "file",
+        "pdf": "pdf",
         "video": "video",
         "audio": "audio",
         "bookmark": "bookmark",
@@ -217,7 +292,7 @@ def _extract_auth_token(client) -> Optional[str]:
 
 def _attach_file_to_block(client, block, file_upload_id: str) -> None:
     block_type = block.get("type")
-    if block_type not in {"image", "video", "audio", "file"}:
+    if block_type not in {"image", "video", "audio", "file", "pdf"}:
         logger.debug("Block type %s cannot carry a file upload", block_type)
         return
 
@@ -368,3 +443,100 @@ def _sizeof_fmt(num, suffix='B'):
             return f"{num:3.1f}{unit}{suffix}"
         num /= 1024.0
     return f"{num:.1f}Yi{suffix}"
+
+
+def _validate_block_data(block_data):
+    """Validate that block data has required structure for Notion API."""
+    if not isinstance(block_data, dict):
+        return False
+    
+    if "type" not in block_data:
+        return False
+    
+    block_type = block_data["type"]
+    
+    # Check that the block type has its corresponding content
+    if block_type not in block_data:
+        return False
+    
+    # Validate rich text blocks
+    if block_type in ["paragraph", "heading_1", "heading_2", "heading_3", "quote", "bulleted_list_item", "numbered_list_item", "to_do", "toggle", "code"]:
+        content = block_data[block_type]
+        if "rich_text" not in content:
+            return False
+        
+        # Validate rich text structure
+        for rich_text_item in content["rich_text"]:
+            if not _validate_rich_text_item(rich_text_item):
+                return False
+    
+    return True
+
+
+def _validate_rich_text_item(rich_text_item):
+    """Validate a rich text item structure."""
+    if not isinstance(rich_text_item, dict):
+        return False
+    
+    if rich_text_item.get("type") != "text":
+        return False
+    
+    text_obj = rich_text_item.get("text", {})
+    if not isinstance(text_obj, dict):
+        return False
+    
+    # Validate URL if present
+    if "link" in text_obj:
+        link_obj = text_obj["link"]
+        if not isinstance(link_obj, dict):
+            return False
+        
+        url = link_obj.get("url")
+        if not _is_valid_url(url):
+            logger.warning(f"Invalid URL found in link: {url}")
+            return False
+    
+    return True
+
+
+def _is_valid_url(url):
+    """Validate if a URL is valid and not empty for Notion API."""
+    if not url or not isinstance(url, str):
+        return False
+    
+    # Strip whitespace
+    url = url.strip()
+    
+    if not url:
+        return False
+    
+    # Reject bare anchors and incomplete URLs common in web clips
+    if url in ['#', '#/', '#!']:
+        return False
+    
+    # Must be a complete URL with protocol for external links
+    if url.startswith(('http://', 'https://')):
+        # Basic check that it's not just the protocol
+        if len(url) > 8 and '.' in url:
+            return True
+        return False
+    
+    # Allow well-formed mailto links
+    if url.startswith('mailto:') and '@' in url and len(url) > 8:
+        return True
+    
+    # Allow other protocols but be more strict
+    if ':' in url and not url.startswith(('javascript:', 'data:', 'about:')):
+        # Must have content after the protocol
+        if len(url.split(':', 1)[1]) > 2:
+            return True
+    
+    # For relative paths, they must have actual content and be meaningful
+    if url.startswith('/') and len(url) > 1:
+        return True
+    
+    # Reject everything else including bare anchors, incomplete fragments
+    return False
+
+
+
