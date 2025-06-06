@@ -11,7 +11,7 @@ class NotionBookmarkBlock(NotionBaseBlock):
     def __init__(self, url, **kwargs):
         super().__init__(**kwargs)
 
-        self.attrs["link"] = url
+        self.attrs["url"] = url
 
 
 class NotionEquationBlock(NotionBaseBlock):

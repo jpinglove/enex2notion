@@ -153,3 +153,6 @@ Thumbs.db
 # Pycharm
 .idea/
 .env*
+
+
+tmp/

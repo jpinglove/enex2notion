@@ -7,6 +7,7 @@ from enex2notion.enex_types import EvernoteNote
 from enex2notion.note_parser.note_post_process_condense import condense_lines
 from enex2notion.note_parser.note_post_process_resources import resolve_resources
 from enex2notion.note_parser.note_type_based import parse_note_blocks_based_on_type
+from enex2notion.notion_blocks.minor import NotionBookmarkBlock
 from enex2notion.notion_blocks.text import NotionCalloutBlock, TextProp
 from enex2notion.utils_static import Rules
 
@@ -26,6 +27,11 @@ def parse_note(note: EvernoteNote, rules: Rules):
         note_blocks = condense_lines(note_blocks, is_sparse=True)
     elif rules.condense_lines:
         note_blocks = condense_lines(note_blocks)
+
+    # Add source URL bookmark block at the top if it exists
+    if note.url and note.url.strip():
+        logger.info(f"Adding source URL bookmark block: {note.url}")
+        note_blocks.insert(0, NotionBookmarkBlock(url=note.url.strip()))
 
     if rules.add_meta:
         _add_meta(note_blocks, note)

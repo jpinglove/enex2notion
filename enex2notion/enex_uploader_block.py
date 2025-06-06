@@ -17,6 +17,216 @@ def upload_block(page, block):
     if not client:
         raise ValueError("No client available for block upload")
     
+    # Check if this block needs to be chunked due to text length
+    if _needs_text_chunking(block):
+        logger.info(f"Block type '{block.type}' exceeds text limits, chunking into multiple blocks")
+        chunked_blocks = _chunk_text_block(block)
+        
+        logger.debug(f"Created {len(chunked_blocks)} chunks from original block")
+        
+        # Upload each chunk as a separate block
+        for i, chunk_block in enumerate(chunked_blocks):
+            logger.debug(f"Uploading chunk {i+1}/{len(chunked_blocks)}")
+            _upload_single_block(page, chunk_block)
+        
+        logger.info(f"Successfully uploaded {len(chunked_blocks)} chunked blocks")
+        return
+    
+    # Regular single block upload
+    _upload_single_block(page, block)
+
+
+def _needs_text_chunking(block):
+    """Check if a block needs text chunking due to size limits."""
+    if not hasattr(block, 'properties') or not block.properties:
+        return False
+    
+    # Check if the title property contains text that exceeds limits
+    title_properties = block.properties.get("title", [])
+    
+    total_text_length = 0
+    for prop in title_properties:
+        if isinstance(prop, list) and len(prop) >= 1:
+            text_content = prop[0]
+            if isinstance(text_content, str):
+                total_text_length += len(text_content)
+                if len(text_content) > 1800:  # Individual segment too large
+                    return True
+        elif isinstance(prop, str):
+            total_text_length += len(prop)
+            if len(prop) > 1800:
+                return True
+    
+    # Check if total accumulated text exceeds limit
+    if total_text_length > 1800:
+        logger.debug(f"Block total text length ({total_text_length}) exceeds safe limit, will chunk")
+        return True
+    
+    return False
+
+
+def _chunk_text_block(block):
+    """Split a block with large text content into multiple blocks."""
+    if not hasattr(block, 'properties') or not block.properties:
+        return [block]
+    
+    title_properties = block.properties.get("title", [])
+    if not title_properties:
+        return [block]
+    
+    chunked_blocks = []
+    current_chunk_props = []
+    current_chunk_length = 0
+    
+    for prop in title_properties:
+        if isinstance(prop, list) and len(prop) >= 1:
+            text_content = prop[0]
+            formatting = prop[1] if len(prop) > 1 else []
+            
+            if isinstance(text_content, str) and len(text_content) > 1800:
+                # This single text segment is too large, need to split it
+                text_chunks = _split_text_content(text_content, 1800)
+                
+                for i, chunk in enumerate(text_chunks):
+                    # Create a new property for each chunk
+                    if formatting:
+                        chunk_prop = [chunk, formatting]
+                    else:
+                        chunk_prop = [chunk]
+                    
+                    # If this is not the first chunk or we have accumulated properties,
+                    # create a new block
+                    if i > 0 or current_chunk_props:
+                        # Create block with current accumulated properties
+                        if current_chunk_props:
+                            chunked_blocks.append(_create_block_copy(block, current_chunk_props))
+                            current_chunk_props = []
+                            current_chunk_length = 0
+                        
+                        # Create block with just this chunk
+                        chunked_blocks.append(_create_block_copy(block, [chunk_prop]))
+                    else:
+                        # First chunk, can accumulate
+                        current_chunk_props.append(chunk_prop)
+                        current_chunk_length += len(chunk)
+            else:
+                # Regular sized text, check if we can add it to current chunk
+                text_len = len(text_content) if isinstance(text_content, str) else 0
+                
+                if current_chunk_length + text_len > 1800:
+                    # Create block with current accumulated properties
+                    if current_chunk_props:
+                        chunked_blocks.append(_create_block_copy(block, current_chunk_props))
+                        current_chunk_props = []
+                        current_chunk_length = 0
+                
+                current_chunk_props.append(prop)
+                current_chunk_length += text_len
+        else:
+            # Handle other property types
+            current_chunk_props.append(prop)
+    
+    # Create final block with any remaining properties
+    if current_chunk_props:
+        chunked_blocks.append(_create_block_copy(block, current_chunk_props))
+    
+    return chunked_blocks if chunked_blocks else [block]
+
+
+def _split_text_content(text, max_length):
+    """Split text content into chunks of maximum length, trying to preserve word boundaries."""
+    if len(text) <= max_length:
+        return [text]
+    
+    chunks = []
+    current_pos = 0
+    
+    while current_pos < len(text):
+        # Calculate the end position for this chunk
+        end_pos = min(current_pos + max_length, len(text))
+        
+        # If we're not at the end of the text, try to find a good break point
+        if end_pos < len(text):
+            # Look for the last space, newline, or punctuation within the chunk
+            break_chars = [' ', '\n', '\t', '.', ',', ';', '!', '?', ':', ')']
+            break_pos = -1
+            
+            for i in range(end_pos - 1, current_pos + max_length // 2, -1):
+                if text[i] in break_chars:
+                    break_pos = i + 1
+                    break
+            
+            if break_pos > current_pos:
+                end_pos = break_pos
+        
+        chunk = text[current_pos:end_pos].strip()
+        if chunk:  # Only add non-empty chunks
+            chunks.append(chunk)
+        
+        current_pos = end_pos
+    
+    return chunks
+
+
+def _create_block_copy(original_block, new_properties):
+    """Create a copy of a block with new title properties."""
+    # Import here to avoid circular imports
+    from enex2notion.notion_blocks.header import (
+        NotionHeaderBlock,
+        NotionSubHeaderBlock,
+        NotionSubSubHeaderBlock,
+    )
+    from enex2notion.notion_blocks.list import (
+        NotionBulletedListBlock,
+        NotionNumberedListBlock,
+        NotionTodoBlock,
+    )
+    from enex2notion.notion_blocks.text import NotionTextBlock
+
+    # Create a new block of the same type
+    block_type = original_block.type
+    new_block = None
+    
+    if block_type == "text":
+        new_block = NotionTextBlock()
+    elif block_type == "header":
+        new_block = NotionHeaderBlock()
+    elif block_type == "sub_header":
+        new_block = NotionSubHeaderBlock()
+    elif block_type == "sub_sub_header":
+        new_block = NotionSubSubHeaderBlock()
+    elif block_type == "bulleted_list":
+        new_block = NotionBulletedListBlock()
+    elif block_type == "numbered_list":
+        new_block = NotionNumberedListBlock()
+    elif block_type == "to_do":
+        new_block = NotionTodoBlock(checked=original_block.attrs.get("checked", False))
+    elif block_type == "code":
+        from enex2notion.notion_blocks.text import NotionCodeBlock
+        new_block = NotionCodeBlock(language=original_block.attrs.get("language", "plain text"))
+    elif block_type == "quote":
+        from enex2notion.notion_blocks.text import NotionQuoteBlock
+        new_block = NotionQuoteBlock()
+    else:
+        # Fallback to text block
+        new_block = NotionTextBlock()
+    
+    # Copy attributes (except title properties)
+    new_block.attrs = original_block.attrs.copy()
+    new_block.properties = original_block.properties.copy()
+    
+    # Set the new title properties
+    new_block.properties["title"] = new_properties
+    
+    return new_block
+
+
+def _upload_single_block(page, block):
+    """Upload a single block to a page using the modern Notion API."""
+    client = page.get("_client")
+    if not client:
+        raise ValueError("No client available for block upload")
+    
     # For file blocks with resources, upload the file first to get the upload ID
     file_upload_id = None
     if (isinstance(block, NotionUploadableBlock) and 
@@ -304,6 +514,11 @@ def _convert_properties_to_rich_text(properties):
             formatting = prop[1] if len(prop) > 1 else []
             
             if text_content:  # Only add non-empty text
+                # Ensure individual text content doesn't exceed limits
+                if isinstance(text_content, str) and len(text_content) > 2000:
+                    logger.warning(f"Text content exceeds 2000 chars ({len(text_content)}), truncating")
+                    text_content = text_content[:1900] + "..."  # Truncate with ellipsis
+                
                 text_obj = {
                     "type": "text",
                     "text": {"content": text_content}
@@ -339,11 +554,21 @@ def _convert_properties_to_rich_text(properties):
                 rich_text.append(text_obj)
         elif isinstance(prop, str):
             # Handle simple string properties
+            text_content = prop
+            if len(text_content) > 2000:
+                logger.warning(f"Simple string content exceeds 2000 chars ({len(text_content)}), truncating")
+                text_content = text_content[:1900] + "..."  # Truncate with ellipsis
+            
             text_obj = {
                 "type": "text",
-                "text": {"content": prop}
+                "text": {"content": text_content}
             }
             rich_text.append(text_obj)
+    
+    # Final check: ensure total content length doesn't exceed limits
+    total_length = sum(len(rt.get("text", {}).get("content", "")) for rt in rich_text)
+    if total_length > 2000:
+        logger.warning(f"Total rich text content exceeds 2000 chars ({total_length}), this may cause upload failures")
     
     return rich_text
 

@@ -13,8 +13,8 @@ def mock_api(mocker):
     return {
         "get_import_root": mocker.patch("enex2notion.cli_notion.get_import_root"),
         "get_notion_client": mocker.patch("enex2notion.cli_notion.get_notion_client"),
-        "get_notebook_database": mocker.patch(
-            "enex2notion.cli_upload.get_notebook_database"
+        "get_notebook_page": mocker.patch(
+            "enex2notion.cli_upload.get_notebook_page"
         ),
         "get_notebook_page": mocker.patch("enex2notion.cli_upload.get_notebook_page"),
         "upload_note": mocker.patch("enex2notion.cli_upload.upload_note"),
@@ -81,13 +81,13 @@ def test_db_mode(mock_api, fake_note_factory, mocker):
     cli(["--token", "fake_token", "fake.enex"])
 
     mock_api["get_notebook_page"].assert_not_called()
-    mock_api["get_notebook_database"].assert_called_once_with(mocker.ANY, "fake")
+    mock_api["get_notebook_page"].assert_called_once_with(mocker.ANY, "fake")
 
 
 def test_page_mode(mock_api, fake_note_factory, mocker):
     cli(["--token", "fake_token", "--mode", "PAGE", "fake.enex"])
 
-    mock_api["get_notebook_database"].assert_not_called()
+    mock_api["get_notebook_page"].assert_not_called()
     mock_api["get_notebook_page"].assert_called_once_with(mocker.ANY, "fake")
 
 
@@ -153,19 +153,19 @@ def test_upload_skip(mock_api, fake_note_factory, mocker, caplog):
 
 
 def test_upload_notebook_fail(mock_api, fake_note_factory, mocker, caplog):
-    mock_api["get_notebook_database"].side_effect = [NoteUploadFailException] * 5
+    mock_api["get_notebook_page"].side_effect = [NoteUploadFailException] * 5
 
     with pytest.raises(NoteUploadFailException):
         cli(["--token", "fake_token", "fake.enex"])
 
 
 def test_upload_notebook_skip(mock_api, fake_note_factory, mocker, caplog):
-    mock_api["get_notebook_database"].side_effect = [NoteUploadFailException] * 5
+    mock_api["get_notebook_page"].side_effect = [NoteUploadFailException] * 5
 
     with caplog.at_level(logging.ERROR, logger="enex2notion"):
         cli(["--token", "fake_token", "--skip-failed", "fake.enex"])
 
-    assert mock_api["get_notebook_database"].call_count == 5
+    assert mock_api["get_notebook_page"].call_count == 5
     assert "Failed to get notebook root for" in caplog.text
 
 

@@ -9,7 +9,7 @@ from requests import HTTPError
 from enex2notion.cli_notion import get_import_root
 from enex2notion.enex_types import EvernoteNote
 from enex2notion.enex_uploader import upload_note
-from enex2notion.enex_uploader_modes import get_notebook_database, get_notebook_page
+from enex2notion.enex_uploader_modes import get_notebook_page
 from enex2notion.note_parser.note import parse_note
 from enex2notion.utils_exceptions import NoteUploadFailException
 
@@ -17,7 +17,7 @@ from enex2notion.utils_exceptions import NoteUploadFailException
 @pytest.mark.vcr()
 @pytest.mark.usefixtures("vcr_uuid4")
 def test_notebook_database(notion_test_page):
-    test_database = get_notebook_database(notion_test_page, "test_database")
+    test_database = get_notebook_page(notion_test_page, "test_database")
 
     properties = test_database.views[0].get("format.list_properties")
 
@@ -43,26 +43,26 @@ def test_notebook_database(notion_test_page):
 @pytest.mark.vcr()
 @pytest.mark.usefixtures("vcr_uuid4")
 def test_notebook_database_existing(notion_test_page):
-    test_database = get_notebook_database(notion_test_page, "test_database")
+    test_database = get_notebook_page(notion_test_page, "test_database")
 
-    assert test_database == get_notebook_database(notion_test_page, "test_database")
+    assert test_database == get_notebook_page(notion_test_page, "test_database")
 
 
 @pytest.mark.vcr()
 @pytest.mark.usefixtures("vcr_uuid4")
 def test_notebook_database_fail(notion_test_page, mocker):
     mocker.patch(
-        "enex2notion.enex_uploader_modes._get_notebook_database", side_effect=Exception
+        "enex2notion.enex_uploader_modes._get_notebook_page", side_effect=Exception
     )
 
     with pytest.raises(NoteUploadFailException):
-        get_notebook_database(notion_test_page, "test_database")
+        get_notebook_page(notion_test_page, "test_database")
 
 
 @pytest.mark.vcr()
 @pytest.mark.usefixtures("vcr_uuid4")
 def test_notebook_database_existing_no_options(notion_test_page):
-    test_database = get_notebook_database(notion_test_page, "test_database")
+    test_database = get_notebook_page(notion_test_page, "test_database")
 
     tag_col_id = next(
         c_k
@@ -72,7 +72,7 @@ def test_notebook_database_existing_no_options(notion_test_page):
 
     test_database.collection.set(f"schema.{tag_col_id}.options", None)
 
-    test_database = get_notebook_database(notion_test_page, "test_database")
+    test_database = get_notebook_page(notion_test_page, "test_database")
 
     assert test_database.collection.get(f"schema.{tag_col_id}.options") == []
 
@@ -143,7 +143,7 @@ def test_empty_database_cleanup(notion_test_page):
 
     root.children.add_new(CollectionViewPageBlock)
 
-    get_notebook_database(root, "test_database")
+    get_notebook_page(root, "test_database")
 
     assert len(root.children) == 1
     assert root.children[0].title == "test_database"
@@ -271,7 +271,7 @@ def test_upload_note_fail_db(notion_test_page, mocker, parse_rules):
 
     note_blocks = parse_note(test_note, parse_rules)
 
-    test_database = get_notebook_database(notion_test_page, "test_database")
+    test_database = get_notebook_page(notion_test_page, "test_database")
 
     mocker.patch("enex2notion.enex_uploader.upload_block", side_effect=HTTPError)
 
@@ -327,7 +327,7 @@ def test_upload_note_db(notion_test_page, parse_rules):
         resources=[],
     )
 
-    test_database = get_notebook_database(notion_test_page, "test_database")
+    test_database = get_notebook_page(notion_test_page, "test_database")
 
     note_blocks = parse_note(test_note, parse_rules)
 

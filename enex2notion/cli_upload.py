@@ -6,7 +6,7 @@ from typing import Optional
 from enex2notion.enex_parser import count_notes, iter_notes
 from enex2notion.enex_types import EvernoteNote
 from enex2notion.enex_uploader import upload_note
-from enex2notion.enex_uploader_modes import get_notebook_database, get_notebook_page
+from enex2notion.enex_uploader_modes import get_notebook_page
 from enex2notion.note_parser.note import parse_note
 from enex2notion.utils_exceptions import NoteUploadFailException
 from enex2notion.utils_static import Rules
@@ -108,7 +108,7 @@ class EnexUploader(object):
             return None
 
         error_message = f"Failed to get notebook root for '{notebook_title}'"
-        get_func = get_notebook_database if self.mode == "DB" else get_notebook_page
+        get_func = get_notebook_page if self.mode == "DB" else get_notebook_page
 
         return self._attempt_upload(
             get_func, error_message, self.import_root, notebook_title
