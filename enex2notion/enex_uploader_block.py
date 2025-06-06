@@ -1,12 +1,16 @@
 import io
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
+from notion_client.errors import APIResponseError
 
 from enex2notion.enex_types import EvernoteResource
+from enex2notion.notion_blocks.text import NotionTextBlock, TextProp
 from enex2notion.notion_blocks.uploadable import NotionUploadableBlock
+from enex2notion.utils_rand_id import rand_id
+from enex2notion.utils_static import Rules
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +284,7 @@ def _upload_single_block(page, block):
                         "_client": client
                     }
                     upload_block(child_page, child_block)
-                except Exception as e:
+                except APIResponseError as e:
                     # If child upload fails due to "does not support children", 
                     # upload at the parent level instead
                     if "does not support children" in str(e).lower():
@@ -290,6 +294,21 @@ def _upload_single_block(page, block):
                         # Re-raise other errors
                         raise
                 
+    except APIResponseError as e:
+        if "invalid image url" in str(e).lower() and block.type == "image":
+            logger.warning(
+                f"Invalid image URL '{block.attrs.get('url', '')}',"
+                " replacing with text block"
+            )
+
+            fallback_text = f"Invalid image URL: {block.attrs.get('url', '')}"
+
+            new_block = NotionTextBlock(text_prop=TextProp(text=fallback_text))
+
+            upload_block(page, new_block)
+        else:
+            logger.error(f"Failed to upload block: {e}")
+            raise
     except Exception as e:
         logger.error(f"Failed to upload block: {e}")
         raise
