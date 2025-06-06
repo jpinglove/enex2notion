@@ -11,7 +11,7 @@ def parse_table(element):
     if not rows:
         return None
 
-    table = NotionTableBlock(columns=len(rows[0]))
+    table = NotionTableBlock(width=len(rows[0]))
 
     for row in rows:
         table.add_row(row)

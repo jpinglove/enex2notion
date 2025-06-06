@@ -1,7 +1,7 @@
 import io
 import logging
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -29,6 +29,11 @@ def upload_block(page, block):
             file_upload_id = _try_direct_upload(auth_token, block.resource)
             if file_upload_id:
                 logger.debug(f"Pre-upload successful, got file ID: {file_upload_id}")
+    
+    # Special handling for table blocks - they need to be created with their children
+    if block.type == "table":
+        _upload_table_with_children(page, block, file_upload_id)
+        return
     
     # Convert our internal block representation to Notion API format
     block_data = _convert_block_to_api_format(block, file_upload_id)
@@ -80,11 +85,59 @@ def upload_block(page, block):
         raise
 
 
+def _upload_table_with_children(page, table_block, file_upload_id=None):
+    """Upload a table block with its table_row children in a single request."""
+    client = page.get("_client")
+    
+    # Convert table block
+    table_data = _convert_block_to_api_format(table_block, file_upload_id)
+    
+    # Convert table_row children and add them to the table's children property
+    table_row_children = []
+    
+    for child_block in table_block.children:
+        if child_block.type == "table_row":
+            child_data = _convert_block_to_api_format(child_block, file_upload_id)
+            table_row_children.append(child_data)
+    
+    # If no table_row children found, create at least one empty row
+    if len(table_row_children) == 0:
+        table_width = table_block.attrs.get("table_width", 2)
+        empty_cells = [[{"type": "text", "text": {"content": ""}}] for _ in range(table_width)]
+        empty_row = {
+            "object": "block",
+            "type": "table_row",
+            "table_row": {
+                "cells": empty_cells
+            }
+        }
+        table_row_children.append(empty_row)
+    
+    # Add the table rows as children to the table block
+    table_data[table_data["type"]]["children"] = table_row_children
+    
+    logger.debug(f"Uploading table with {len(table_row_children)} rows as children")
+    logger.debug(f"Table data: {table_data}")
+    
+    try:
+        # Upload table with its rows as children in a single request
+        response = client.blocks.children.append(
+            block_id=page["id"],
+            children=[table_data]
+        )
+        
+        logger.debug("Table and rows uploaded successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to upload table with children: {e}")
+        raise
+
+
 def _convert_block_to_api_format(block, file_upload_id=None):
     """Convert internal block representation to Notion API format."""
     notion_type = _get_notion_block_type(block.type)
     
-    api_block = {
+    api_block: Dict[str, Any] = {
         "object": "block",
         "type": notion_type
     }
@@ -120,6 +173,56 @@ def _convert_block_to_api_format(block, file_upload_id=None):
         
     elif notion_type == "divider":
         api_block[notion_type] = {}
+        
+    elif notion_type == "table":
+        # Table blocks need specific structure for Notion API
+        table_width = block.attrs.get("table_width", 2)
+        has_column_header = block.attrs.get("has_column_header", False)
+        has_row_header = block.attrs.get("has_row_header", False)
+        
+        api_block[notion_type] = {
+            "table_width": table_width,
+            "has_column_header": has_column_header,
+            "has_row_header": has_row_header
+        }
+        
+    elif notion_type == "table_row":
+        # Table row blocks contain cells with rich text
+        cells = []
+        
+        # Extract cell data from the block's properties
+        if hasattr(block, 'properties') and block.properties:
+            # Look for cell properties (they are stored as cell_0, cell_1, etc.)
+            cell_index = 0
+            while f"cell_{cell_index}" in block.properties:
+                cell_data = block.properties[f"cell_{cell_index}"]
+                
+                # Handle different cell data formats
+                if isinstance(cell_data, str):
+                    # Simple string content
+                    cell_rich_text = [{"type": "text", "text": {"content": cell_data}}]
+                elif isinstance(cell_data, list):
+                    # Already in properties format (from TextProp)
+                    cell_rich_text = _convert_properties_to_rich_text({"title": cell_data})
+                else:
+                    # Fallback to empty cell
+                    cell_rich_text = [{"type": "text", "text": {"content": ""}}]
+                
+                # Ensure we have at least an empty rich text array for each cell
+                if not cell_rich_text:
+                    cell_rich_text = [{"type": "text", "text": {"content": ""}}]
+                
+                cells.append(cell_rich_text)
+                cell_index += 1
+        
+        # If no cells found, create empty cells based on table width (default to 2)
+        if not cells:
+            # Default to 2 columns if we can't determine the width
+            cells = [[{"type": "text", "text": {"content": ""}}] for _ in range(2)]
+        
+        api_block[notion_type] = {
+            "cells": cells
+        }
         
     elif notion_type in ["image", "video", "audio", "file", "pdf"]:
         # File blocks need special handling
@@ -267,6 +370,7 @@ def _get_notion_block_type(block_type):
         "bookmark": "bookmark",
         "embed": "embed",
         "table": "table",
+        "table_row": "table_row",
     }
     
     return type_mapping.get(block_type, "paragraph")
@@ -469,6 +573,84 @@ def _validate_block_data(block_data):
         for rich_text_item in content["rich_text"]:
             if not _validate_rich_text_item(rich_text_item):
                 return False
+    
+    # Validate table blocks
+    elif block_type == "table":
+        content = block_data[block_type]
+        if not isinstance(content, dict):
+            return False
+        
+        # Check required table properties
+        required_props = ["table_width", "has_column_header", "has_row_header"]
+        for prop in required_props:
+            if prop not in content:
+                return False
+        
+        # Validate property types
+        if not isinstance(content["table_width"], int) or content["table_width"] <= 0:
+            return False
+        if not isinstance(content["has_column_header"], bool):
+            return False
+        if not isinstance(content["has_row_header"], bool):
+            return False
+        
+        # Validate children if present (for table creation with rows)
+        if "children" in content:
+            if not isinstance(content["children"], list):
+                return False
+            
+            # Validate each child table_row
+            for child in content["children"]:
+                if not isinstance(child, dict):
+                    return False
+                if child.get("type") != "table_row":
+                    return False
+                
+                # Validate table_row structure
+                table_row_content = child.get("table_row", {})
+                if not isinstance(table_row_content, dict):
+                    return False
+                
+                if "cells" not in table_row_content:
+                    return False
+                
+                cells = table_row_content["cells"]
+                if not isinstance(cells, list):
+                    return False
+                
+                # Validate each cell contains rich text
+                for cell in cells:
+                    if not isinstance(cell, list):
+                        return False
+                    
+                    # Validate rich text structure in each cell
+                    for rich_text_item in cell:
+                        if not _validate_rich_text_item(rich_text_item):
+                            return False
+    
+    # Validate table_row blocks
+    elif block_type == "table_row":
+        content = block_data[block_type]
+        if not isinstance(content, dict):
+            return False
+        
+        # Check required table_row properties
+        if "cells" not in content:
+            return False
+        
+        cells = content["cells"]
+        if not isinstance(cells, list):
+            return False
+        
+        # Validate each cell contains rich text
+        for cell in cells:
+            if not isinstance(cell, list):
+                return False
+            
+            # Validate rich text structure in each cell
+            for rich_text_item in cell:
+                if not _validate_rich_text_item(rich_text_item):
+                    return False
     
     return True
 
