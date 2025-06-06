@@ -5,7 +5,7 @@ from notion_client.errors import APIResponseError
 from tqdm import tqdm
 
 from enex2notion.enex_types import EvernoteNote
-from enex2notion.enex_uploader_block import upload_block
+from enex2notion.enex_uploader_block import upload_blocks_batch
 from enex2notion.utils_exceptions import NoteUploadFailException
 
 logger = logging.getLogger(__name__)
@@ -24,13 +24,17 @@ def _upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
     logger.debug(f"Creating new page for note '{note.title}'")
     new_page = _make_page(note, root)
 
-    progress_iter = tqdm(
-        iterable=note_blocks, unit="block", leave=False, ncols=PROGRESS_BAR_WIDTH
-    )
-
+    # Use batched upload for better performance
+    logger.info(f"Uploading {len(note_blocks)} blocks using batched approach")
+    
     try:
-        for block in progress_iter:
-            upload_block(new_page, block)
+        # Show progress with real-time updates as batches are uploaded
+        with tqdm(total=len(note_blocks), unit="block", leave=False, ncols=PROGRESS_BAR_WIDTH, desc="Uploading blocks") as pbar:
+            def progress_callback(num_processed):
+                pbar.update(num_processed)
+            
+            upload_blocks_batch(new_page, note_blocks, progress_callback)
+        
     except APIResponseError:
         if not keep_failed:
             _delete_page(new_page)

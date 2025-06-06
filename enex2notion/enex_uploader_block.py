@@ -14,6 +14,129 @@ from enex2notion.utils_static import Rules
 
 logger = logging.getLogger(__name__)
 
+# Notion API limit for batch block creation
+BATCH_LIMIT = 50
+
+
+def upload_blocks_batch(page, blocks, progress_callback=None):
+    """
+    Upload blocks using batching optimization for speed.
+    
+    Groups simple leaf blocks into batches of up to 50 for single API calls,
+    while complex blocks (files, tables, nested blocks) use individual uploads.
+    
+    Args:
+        page: Notion page object with client
+        blocks: List of blocks to upload
+        progress_callback: Optional callback function to report progress (called with number of blocks processed)
+    """
+    client = page.get("_client")
+    if not client:
+        raise ValueError("No client available for block upload")
+    
+    batch_queue = []
+    processed_count = 0
+    batched_count = 0
+    individual_count = 0
+    
+    def flush_batch():
+        """Send accumulated batch blocks to Notion API."""
+        nonlocal processed_count, batched_count
+        if not batch_queue:
+            return
+        
+        batch_size = len(batch_queue)
+        logger.debug(f"Uploading batch of {batch_size} blocks")
+        try:
+            client.blocks.children.append(
+                block_id=page["id"],
+                children=batch_queue
+            )
+            logger.debug(f"Successfully uploaded batch of {batch_size} blocks")
+            processed_count += batch_size
+            batched_count += batch_size
+            if progress_callback:
+                progress_callback(batch_size)
+        except Exception as e:
+            logger.error(f"Failed to upload batch of {batch_size} blocks: {e}")
+            raise
+        finally:
+            batch_queue.clear()
+    
+    for block in blocks:
+        # Check if this block can be batched (simple leaf blocks only)
+        if _can_batch_block(block):
+            # Convert to API format and add to batch
+            try:
+                block_data = _convert_block_to_api_format(block, None)
+                if _validate_block_data(block_data):
+                    batch_queue.append(block_data)
+                    
+                    # If batch is full, send it
+                    if len(batch_queue) >= BATCH_LIMIT:
+                        flush_batch()
+                else:
+                    # If conversion failed, flush batch and use single upload
+                    flush_batch()
+                    upload_block(page, block)
+                    processed_count += 1
+                    individual_count += 1
+                    if progress_callback:
+                        progress_callback(1)
+            except Exception as e:
+                logger.warning(f"Failed to batch block, using single upload: {e}")
+                flush_batch()
+                upload_block(page, block)
+                processed_count += 1
+                individual_count += 1
+                if progress_callback:
+                    progress_callback(1)
+        else:
+            # Complex block - flush current batch and use single upload
+            flush_batch()
+            upload_block(page, block)
+            processed_count += 1
+            individual_count += 1
+            if progress_callback:
+                progress_callback(1)
+    
+    # Send any remaining blocks in the batch
+    flush_batch()
+    
+    logger.info(f"Successfully uploaded {processed_count} blocks (batched: {batched_count}, individual: {individual_count})")
+
+
+def _can_batch_block(block):
+    """
+    Check if a block can be safely batched.
+    
+    Only simple leaf blocks without children or complex requirements can be batched.
+    """
+    # Blocks with children need individual handling
+    if hasattr(block, 'children') and block.children:
+        return False
+    
+    # File/media blocks need special upload handling
+    if block.type in {"image", "video", "audio", "file", "pdf"}:
+        return False
+    
+    # Uploadable blocks with resources need file upload
+    if (isinstance(block, NotionUploadableBlock) and 
+        hasattr(block, 'resource') and 
+        block.resource is not None):
+        return False
+    
+    # Table blocks need special structure handling
+    if block.type in {"table", "table_row"}:
+        return False
+    
+    # Check if block needs text chunking
+    if _needs_text_chunking(block):
+        return False
+    
+    # All other blocks can be batched
+    return True
+
 
 def upload_block(page, block):
     """Upload a block to a page using the modern Notion API."""
