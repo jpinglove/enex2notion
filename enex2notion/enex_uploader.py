@@ -25,8 +25,24 @@ def upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
 
 
 def _upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
-    logger.debug(f"Creating new page for note '{note.title}'")
-    new_page = _make_page(note, root)
+    logger.debug(f"Looking for existing incomplete upload for note '{note.title}'")
+    
+    # First, try to find existing "[UNFINISHED UPLOAD]" page
+    existing_page = _find_existing_unfinished_page(root, note)
+    
+    if existing_page:
+        logger.info(f"Found existing incomplete upload for note '{note.title}', resuming...")
+        new_page = existing_page
+        
+        # Clear existing blocks from the page to avoid partial upload issues
+        try:
+            _clear_page_blocks(new_page)
+            logger.debug(f"Cleared existing blocks from incomplete page for note '{note.title}'")
+        except Exception as e:
+            logger.warning(f"Failed to clear existing blocks, will try to continue: {e}")
+    else:
+        logger.debug(f"Creating new page for note '{note.title}'")
+        new_page = _make_page(note, root)
 
     try:
         _upload_note_blocks(new_page, note_blocks)
@@ -39,6 +55,77 @@ def _upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
     # Set proper name after everything is uploaded
     _update_page_title(new_page, note.title)
     _update_edit_time(new_page, note.updated)
+
+
+def _find_existing_unfinished_page(root, note: EvernoteNote):
+    """Find existing [UNFINISHED UPLOAD] page for this note."""
+    try:
+        client = root.get("_client")
+        if not client:
+            return None
+        
+        # Search for pages with "[UNFINISHED UPLOAD]" in the title
+        unfinished_title = f"{note.title} [UNFINISHED UPLOAD]"
+        
+        search_result = client.search(
+            query=unfinished_title,
+            filter={
+                "value": "page", 
+                "property": "object"
+            }
+        )
+        
+        # Look for exact match
+        for result in search_result.get("results", []):
+            if result.get("object") == "page":
+                page_title = ""
+                if "properties" in result and "title" in result["properties"]:
+                    title_prop = result["properties"]["title"]
+                    if title_prop.get("type") == "title" and title_prop.get("title"):
+                        page_title = "".join([
+                            t.get("plain_text", "") for t in title_prop["title"]
+                        ])
+                
+                # Check if this is the exact unfinished page we're looking for
+                if page_title == unfinished_title:
+                    # Verify it's under the correct parent
+                    parent = result.get("parent", {})
+                    if parent.get("type") == "page_id" and parent.get("page_id") == root.get("id"):
+                        result["_client"] = client
+                        result["_note"] = note
+                        logger.debug(f"Found existing unfinished page: {page_title}")
+                        return result
+        
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Failed to search for existing unfinished page: {e}")
+        return None
+
+
+def _clear_page_blocks(page):
+    """Clear all blocks from a page to prepare for re-upload."""
+    try:
+        client = page.get("_client")
+        if not client or not page.get("id"):
+            return
+        
+        # Get all blocks from the page
+        blocks_response = client.blocks.children.list(block_id=page["id"])
+        blocks = blocks_response.get("results", [])
+        
+        # Delete all blocks
+        for block in blocks:
+            try:
+                client.blocks.delete(block_id=block["id"])
+            except APIResponseError as e:
+                logger.warning(f"Failed to delete block {block.get('id', 'unknown')}: {e}")
+        
+        logger.debug(f"Cleared {len(blocks)} blocks from page")
+        
+    except Exception as e:
+        logger.warning(f"Failed to clear page blocks: {e}")
+        raise
 
 
 def _update_edit_time(page, date):
@@ -127,12 +214,13 @@ def _update_page_title(page, title):
                     }
                 }
             )
+            logger.debug(f"Updated page title from '[UNFINISHED UPLOAD]' to '{title}'")
     except APIResponseError as e:
         logger.warning(f"Could not update page title: {e}")
 
 
 def _delete_page(page):
-    """Delete a page using the modern API."""
+    """Delete a page using the modern API with better error handling."""
     try:
         client = page.get("_client")
         if client and page.get("id"):
@@ -141,8 +229,11 @@ def _delete_page(page):
                 page_id=page["id"],
                 archived=True
             )
+            logger.debug(f"Successfully archived failed page")
     except APIResponseError as e:
-        logger.warning(f"Could not delete page: {e}")
+        logger.error(f"Failed to delete page: {e}")
+        # Re-raise to ensure the caller knows deletion failed
+        raise
 
 
 def _upload_note_blocks(page, note_blocks):
