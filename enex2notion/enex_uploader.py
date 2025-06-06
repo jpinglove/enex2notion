@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime
 
 from notion_client.errors import APIResponseError
@@ -12,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_BAR_WIDTH = 80
 
+# Global lock for page creation to prevent conflicts on parent pages
+_page_creation_lock = threading.Lock()
+
 
 def upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
     try:
@@ -24,16 +28,8 @@ def _upload_note(root, note: EvernoteNote, note_blocks, keep_failed):
     logger.debug(f"Creating new page for note '{note.title}'")
     new_page = _make_page(note, root)
 
-    # Use batched upload for better performance
-    logger.info(f"Uploading {len(note_blocks)} blocks using batched approach")
-    
     try:
-        # Show progress with real-time updates as batches are uploaded
-        with tqdm(total=len(note_blocks), unit="block", leave=False, ncols=PROGRESS_BAR_WIDTH, desc="Uploading blocks") as pbar:
-            def progress_callback(num_processed):
-                pbar.update(num_processed)
-            
-            upload_blocks_batch(new_page, note_blocks, progress_callback)
+        _upload_note_blocks(new_page, note_blocks)
         
     except APIResponseError:
         if not keep_failed:
@@ -58,54 +54,58 @@ def _update_edit_time(page, date):
 
 
 def _make_page(note, root):
-    """Create a new page using the modern API."""
-    client = root.get("_client")
-    
-    if not client:
-        raise ValueError("No client available for page creation")
-    
-    # Handle the case where we need to create the root page first
-    if root.get("_needs_creation"):
-        # Create a new page at the top level
-        # For the modern API, we need to specify a parent
-        # We'll create it as a standalone page for now
-        tmp_name = f"{root.get('_title', 'Import Root')} [UNFINISHED UPLOAD]"
+    """Create a new page using the modern API with synchronized page creation."""
+    # Use global lock to serialize page creation and prevent conflicts on parent page
+    with _page_creation_lock:
+        client = root.get("_client")
         
-        # Since we can't create top-level pages directly, we need the user to 
-        # specify a parent page or database. For now, we'll raise an error with instructions.
-        raise ValueError(
-            "The modern Notion API requires a parent page or database to create new pages. "
-            "Please create a page in Notion, share it with your integration, and specify "
-            "it using the --pageid option."
-        )
-    
-    # Create a child page under the root
-    tmp_name = f"{note.title} [UNFINISHED UPLOAD]"
-    
-    page_data = {
-        "parent": {"page_id": root["id"]},
-        "properties": {
-            "title": {
-                "title": [
-                    {
-                        "text": {
-                            "content": tmp_name
+        if not client:
+            raise ValueError("No client available for page creation")
+        
+        # Handle the case where we need to create the root page first
+        if root.get("_needs_creation"):
+            # Create a new page at the top level
+            # For the modern API, we need to specify a parent
+            # We'll create it as a standalone page for now
+            tmp_name = f"{root.get('_title', 'Import Root')} [UNFINISHED UPLOAD]"
+            
+            # Since we can't create top-level pages directly, we need the user to 
+            # specify a parent page or database. For now, we'll raise an error with instructions.
+            raise ValueError(
+                "The modern Notion API requires a parent page or database to create new pages. "
+                "Please create a page in Notion, share it with your integration, and specify "
+                "it using the --pageid option."
+            )
+        
+        # Create a child page under the root
+        tmp_name = f"{note.title} [UNFINISHED UPLOAD]"
+        
+        page_data = {
+            "parent": {"page_id": root["id"]},
+            "properties": {
+                "title": {
+                    "title": [
+                        {
+                            "text": {
+                                "content": tmp_name
+                            }
                         }
-                    }
-                ]
-            }
-        },
-        "children": []  # We'll add blocks later
-    }
-    
-    try:
-        new_page = client.pages.create(**page_data)
-        new_page["_client"] = client
-        new_page["_note"] = note
-        return new_page
-    except APIResponseError as e:
-        logger.error(f"Failed to create page: {e}")
-        raise
+                    ]
+                }
+            },
+            "children": []  # We'll add blocks later
+        }
+        
+        try:
+            logger.debug(f"Creating page for note '{note.title}' (with lock)")
+            new_page = client.pages.create(**page_data)
+            new_page["_client"] = client
+            new_page["_note"] = note
+            logger.debug(f"Successfully created page for note '{note.title}'")
+            return new_page
+        except APIResponseError as e:
+            logger.error(f"Failed to create page: {e}")
+            raise
 
 
 def _update_page_title(page, title):
@@ -143,3 +143,16 @@ def _delete_page(page):
             )
     except APIResponseError as e:
         logger.warning(f"Could not delete page: {e}")
+
+
+def _upload_note_blocks(page, note_blocks):
+    """Upload blocks to an existing page using batched approach."""
+    logger.info(f"Uploading {len(note_blocks)} blocks using batched approach")
+    
+    # Show progress with real-time updates as batches are uploaded
+    with tqdm(total=len(note_blocks), unit="block", leave=False, ncols=PROGRESS_BAR_WIDTH, desc="Uploading blocks") as pbar:
+        def progress_callback(num_processed):
+            pbar.update(num_processed)
+        
+        # Use sequential batched upload to avoid page conflicts
+        upload_blocks_batch(page, note_blocks, progress_callback)

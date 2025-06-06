@@ -1,3 +1,4 @@
+import asyncio
 import itertools
 import logging
 from pathlib import Path
@@ -13,6 +14,8 @@ from enex2notion.utils_static import Rules
 
 logger = logging.getLogger(__name__)
 
+# Maximum concurrent note uploads
+MAX_CONCURRENT_NOTES = 3
 
 class DoneFile(object):
     def __init__(self, path: Path):
@@ -62,8 +65,63 @@ class EnexUploader(object):
             f"'{enex_file.stem}' notebook contains {self.notebook_notes_count} note(s)"
         )
 
+        # Use async processing for concurrent note uploads
+        asyncio.run(self._upload_notes_concurrent(enex_file))
+
+    async def _upload_notes_concurrent(self, enex_file: Path):
+        """Upload notes concurrently using async semaphore for rate limiting."""
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_NOTES)
+        
+        # Collect all notes first so we can process them concurrently
+        notes_to_upload = []
         for note_idx, note in enumerate(iter_notes(enex_file), 1):
-            self.upload_note(note, note_idx)
+            if note.note_hash not in self.done_hashes:
+                notes_to_upload.append((note, note_idx))
+            else:
+                logger.debug(f"Skipping note '{note.title}' (already uploaded)")
+        
+        if not notes_to_upload:
+            logger.info("All notes already uploaded, skipping notebook")
+            return
+        
+        logger.info(f"Uploading {len(notes_to_upload)} notes concurrently (max {MAX_CONCURRENT_NOTES} at once)")
+        
+        # Create async tasks for each note
+        tasks = []
+        for note, note_idx in notes_to_upload:
+            task = asyncio.create_task(self._upload_note_async(semaphore, note, note_idx))
+            tasks.append(task)
+        
+        # Execute all note uploads concurrently
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Check for any exceptions that weren't handled
+            failed_count = 0
+            for i, result in enumerate(results):
+                if isinstance(result, Exception) and not self.rules.skip_failed:
+                    failed_count += 1
+                    logger.error(f"Unhandled error in note {i+1}: {result}")
+            
+            if failed_count > 0 and not self.rules.skip_failed:
+                raise Exception(f"{failed_count} notes failed to upload")
+                
+        except Exception as e:
+            logger.error(f"Error during concurrent note upload: {e}")
+            if not self.rules.skip_failed:
+                raise
+
+    async def _upload_note_async(self, semaphore: asyncio.Semaphore, note: EvernoteNote, note_idx: int):
+        """Upload a single note with concurrency limiting."""
+        async with semaphore:
+            # Run the synchronous upload_note in a thread executor
+            loop = asyncio.get_event_loop()
+            try:
+                await loop.run_in_executor(None, self.upload_note, note, note_idx)
+            except Exception as e:
+                logger.error(f"Failed to upload note '{note.title}': {e}")
+                if not self.rules.skip_failed:
+                    raise
 
     def upload_note(self, note: EvernoteNote, note_idx: int):
         if note.note_hash in self.done_hashes:

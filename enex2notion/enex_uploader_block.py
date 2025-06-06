@@ -1,6 +1,8 @@
+import asyncio
 import io
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -16,6 +18,177 @@ logger = logging.getLogger(__name__)
 
 # Notion API limit for batch block creation
 BATCH_LIMIT = 50
+
+# Concurrency control - stay under Notion's 3 rps average
+MAX_CONCURRENT_REQUESTS = 3
+_semaphore = None
+
+def get_semaphore():
+    """Get or create the global semaphore for rate limiting."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    return _semaphore
+
+
+async def upload_blocks_batch_async(page, blocks, progress_callback=None):
+    """
+    Upload blocks using batching optimization with async concurrency for speed.
+    
+    Groups simple leaf blocks into batches and uploads them concurrently while
+    respecting Notion's rate limits.
+    
+    Args:
+        page: Notion page object with client
+        blocks: List of blocks to upload
+        progress_callback: Optional callback function to report progress
+    """
+    client = page.get("_client")
+    if not client:
+        raise ValueError("No client available for block upload")
+    
+    # Group blocks into batches and individual uploads
+    batch_groups = []
+    individual_blocks = []
+    current_batch = []
+    
+    for block in blocks:
+        if _can_batch_block(block):
+            current_batch.append(block)
+            if len(current_batch) >= BATCH_LIMIT:
+                batch_groups.append(current_batch)
+                current_batch = []
+        else:
+            # Flush current batch if any
+            if current_batch:
+                batch_groups.append(current_batch)
+                current_batch = []
+            individual_blocks.append(block)
+    
+    # Add final batch if any
+    if current_batch:
+        batch_groups.append(current_batch)
+    
+    # Create async tasks for batches and individual uploads
+    tasks = []
+    
+    # Add batch upload tasks
+    for batch in batch_groups:
+        task = asyncio.create_task(_upload_batch_async(page, batch, progress_callback))
+        tasks.append(task)
+    
+    # Add individual upload tasks
+    for block in individual_blocks:
+        task = asyncio.create_task(_upload_individual_async(page, block, progress_callback))
+        tasks.append(task)
+    
+    # Execute all tasks concurrently
+    try:
+        await asyncio.gather(*tasks)
+        total_blocks = sum(len(batch) for batch in batch_groups) + len(individual_blocks)
+        batched_blocks = sum(len(batch) for batch in batch_groups)
+        logger.info(f"Successfully uploaded {total_blocks} blocks concurrently (batched: {batched_blocks}, individual: {len(individual_blocks)})")
+    except Exception as e:
+        logger.error(f"Failed to upload blocks concurrently: {e}")
+        raise
+
+
+async def _upload_batch_async(page, batch_blocks, progress_callback=None):
+    """Upload a batch of blocks with rate limiting and retry logic."""
+    semaphore = get_semaphore()
+    
+    async with semaphore:
+        client = page.get("_client")
+        
+        # Convert blocks to API format
+        batch_data = []
+        for block in batch_blocks:
+            try:
+                block_data = _convert_block_to_api_format(block, None)
+                if _validate_block_data(block_data):
+                    batch_data.append(block_data)
+                else:
+                    logger.warning(f"Invalid block data for batch, skipping: {block.type}")
+            except Exception as e:
+                logger.warning(f"Failed to convert block for batch: {e}")
+        
+        if not batch_data:
+            return
+        
+        # Upload with retry logic
+        def api_call():
+            return client.blocks.children.append(
+                block_id=page["id"],
+                children=batch_data
+            )
+        
+        await _api_call_with_retry(
+            api_call,
+            f"batch of {len(batch_data)} blocks"
+        )
+        
+        if progress_callback:
+            progress_callback(len(batch_data))
+
+
+async def _upload_individual_async(page, block, progress_callback=None):
+    """Upload an individual block with rate limiting and retry logic."""
+    semaphore = get_semaphore()
+    
+    async with semaphore:
+        # Run the synchronous upload_block in a thread executor
+        # This ensures file uploads and complex logic still work without blocking the event loop
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, upload_block, page, block)
+            if progress_callback:
+                progress_callback(1)
+        except Exception as e:
+            logger.error(f"Failed to upload individual block: {e}")
+            raise
+
+
+async def _api_call_with_retry(api_call, description, max_retries=5):
+    """
+    Execute an API call with exponential backoff retry logic.
+    
+    Handles rate limiting (429) responses and temporary failures.
+    Runs synchronous API calls in thread executor to avoid blocking event loop.
+    """
+    loop = asyncio.get_event_loop()
+    
+    for attempt in range(max_retries):
+        try:
+            # Run the synchronous API call in a thread executor
+            return await loop.run_in_executor(None, api_call)
+        except APIResponseError as e:
+            if e.status == 429:  # Rate limited
+                # Extract retry-after header if present
+                retry_after = getattr(e, 'retry_after', None) or 1
+                wait_time = min(retry_after * (2 ** attempt), 60)  # Cap at 60 seconds
+                
+                logger.debug(f"Rate limited for {description}, waiting {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                continue
+            elif e.status >= 500:  # Server error
+                wait_time = min(2 ** attempt, 30)  # Exponential backoff, cap at 30s
+                logger.debug(f"Server error for {description}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                # Client error, don't retry
+                logger.error(f"Client error for {description}: {e}")
+                raise
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.error(f"Max retries exceeded for {description}: {e}")
+                raise
+            
+            wait_time = min(2 ** attempt, 30)
+            logger.debug(f"Unexpected error for {description}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries}): {e}")
+            await asyncio.sleep(wait_time)
+    
+    raise Exception(f"Failed to complete {description} after {max_retries} attempts")
 
 
 def upload_blocks_batch(page, blocks, progress_callback=None):
