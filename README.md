@@ -274,7 +274,7 @@ enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID "notebook.enex"
 enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID --done-file done.txt "notebook.enex"
 ```
 
-### My personal command line
+### My personal command line in powershell
 
 ```shell
 
