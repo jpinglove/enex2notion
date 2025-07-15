@@ -274,6 +274,21 @@ enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID "notebook.enex"
 enex2notion --token secret_YOUR_TOKEN_HERE --pageid YOUR_PAGE_ID --done-file done.txt "notebook.enex"
 ```
 
+### My personal command line
+
+```shell
+
+$env:http_proxy="http://127.0.0.1:10808"
+$env:https_proxy="http://127.0.0.1:10808"
+
+poetry run enex2notion --token XXXXXXXXXXXXXXXXXXXXXXXXXXXX --pageid xxxxxxxxxxxxxxxxxxxxxx tmp/ --retry 3 --add-meta --done-file "already.txt" --log "upload.log" --verbose
+```
+
+### Backup evernote data
+
+[Evernote-backup](https://github.com/vzhd1701/evernote-backup)
+
+
 ## Getting help
 
 If you found a bug or have a feature request, please [open a new issue](https://github.com/vzhd1701/enex2notion/issues/new/choose).
